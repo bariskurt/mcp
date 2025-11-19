@@ -52,7 +52,7 @@ from fastmcp import Context, FastMCP
 from loguru import logger
 from mcp.types import ToolAnnotations
 from pathlib import Path
-from pydantic import Field
+from pydantic import BaseModel, Field
 from typing import Annotated, Any, Optional
 
 
@@ -165,11 +165,20 @@ async def suggest_aws_commands(
         raise AwsApiMcpError(error_message)
 
 
+class CallAWSResponse(BaseModel):
+    cli_command: str
+    response: ProgramInterpretationResponse | AwsCliAliasResponse
+
+
+class CallAWSBatchResponse(BaseModel):
+    responses: list[CallAWSResponse]
+
+
 @server.tool(
     name='call_aws',
     description=f"""Execute AWS CLI commands with validation and proper error handling. This is the PRIMARY tool to use when you are confident about the exact AWS CLI command needed to fulfill a user's request. Always prefer this tool over 'suggest_aws_commands' when you have a specific command in mind.
     Key points:
-    - The command MUST start with "aws" and follow AWS CLI syntax
+    - The AWS CLI commands MUST start with "aws" and follow AWS CLI syntax
     - Commands are executed in {DEFAULT_REGION} region by default
     - For cross-region or account-wide operations, explicitly include --region parameter
     - All commands are validated before execution to prevent errors
@@ -177,11 +186,36 @@ async def suggest_aws_commands(
     - The current working directory is {WORKING_DIRECTORY}
     - File paths should always have forward slash (/) as a separator regardless of the system. Example: 'c:/folder/file.txt'
 
+    Single Command Mode:
+    - You can run a single AWS CLI command usign this tool.
+    - Example:
+        call_aws(input="aws s3api list-buckets --region us-east-1")
+
+    Batch Running:
+    - The tool can also run multiple independent commands at the same time.
+    - Call this tool with multiple CLI commands whenever possible.
+    - Batch calling is especially useful where you need to run a command multiple times with different parameter values
+    - Example 1:
+        call_aws(
+            input=[
+                "aws s3api list-buckets --region us-east-1",
+                "aws s3api list-buckets --region us-west-2"
+            ]
+        )
+    - Example 2:
+        call_aws(
+            input=[
+                "aws s3api get-bucket-website --bucket bucket1",
+                "aws s3api get-bucket-website --bucket bucket2"
+            ]
+        )
+
     Best practices for command generation:
     - Always use the most specific service and operation names
     - Always use the working directory when writing files, unless user explicitly mentioned another directory
     - Include --region when operating across regions
     - Only use filters (--filters, --query, --prefix, --pattern, etc) when necessary or user explicitly asked for it
+    - Always use the tool in batch mode whenever it's possible.
 
     Command restrictions:
     - DO NOT use bash/zsh pipes (|) or any shell operators
@@ -207,23 +241,40 @@ async def suggest_aws_commands(
     ),
 )
 async def call_aws(
-    cli_command: Annotated[
-        str, Field(description='The complete AWS CLI command to execute. MUST start with "aws"')
+    input: Annotated[
+        str | list[str], Field(description='A single command or a list of complete AWS CLI commands to execute. Each command MUST start with "aws"')
     ],
     ctx: Context,
     max_results: Annotated[
         int | None,
         Field(description='Optional limit for number of results (useful for pagination)'),
     ] = None,
-) -> ProgramInterpretationResponse | AwsCliAliasResponse:
+) -> ProgramInterpretationResponse | AwsCliAliasResponse | CallAWSBatchResponse:
     """Call AWS with the given CLI command and return the result as a dictionary."""
-    return await call_aws_helper(
-        cli_command=cli_command,
-        ctx=ctx,
-        max_results=max_results,
-        credentials=None,
-    )
 
+    # Allowing cli_commands to be a single string
+    if isinstance(input, str):
+        return await call_aws_helper(
+            cli_command=input,
+            ctx=ctx,
+            max_results=max_results,
+            credentials=None,
+        )
+    elif isinstance(input, list):
+        responses = [
+            CallAWSResponse(
+                cli_command=cli_command, 
+                response=await call_aws_helper(
+                    cli_command=cli_command,
+                    ctx=ctx,
+                    max_results=max_results,
+                    credentials=None,
+                )
+            ) for cli_command in input
+        ]        
+        return CallAWSBatchResponse(responses=responses)
+    
+    raise AwsApiMcpError("Tool input error. call_aws command accepts a string for a single command and list for multiple commands.")
 
 async def call_aws_helper(
     cli_command: Annotated[

@@ -12,7 +12,7 @@ from awslabs.aws_api_mcp_server.server import call_aws, call_aws_helper, main, s
 from botocore.exceptions import NoCredentialsError
 from fastmcp.server.elicitation import AcceptedElicitation
 from tests.fixtures import TEST_CREDENTIALS, DummyCtx
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, call
 
 
 @patch('awslabs.aws_api_mcp_server.server.get_read_only_operations')
@@ -72,6 +72,7 @@ async def test_call_aws_success(
     result = await call_aws.fn('aws s3api list-buckets', DummyCtx())
 
     # Verify - the result should be the ProgramInterpretationResponse object
+    print(result)
     assert result == mock_result
     mock_translate_cli_to_ir.assert_called_once_with('aws s3api list-buckets')
     mock_validate.assert_called_once_with(mock_ir)
@@ -326,7 +327,7 @@ async def test_call_aws_with_consent_and_reject(
 
     # Execute and verify that consent was requested and error is raised
     with pytest.raises(AwsApiMcpError) as exc_info:
-        await call_aws.fn('aws s3api create-bucket --bucket somebucket', mock_ctx)
+        await call_aws.fn(['aws s3api create-bucket --bucket somebucket'], mock_ctx)
 
     assert 'User rejected the execution of the command' in str(exc_info.value)
     mock_translate_cli_to_ir.assert_called_once_with('aws s3api create-bucket --bucket somebucket')
@@ -394,7 +395,7 @@ async def test_call_aws_validation_error_awsmcp_error(mock_translate_cli_to_ir):
 
     # Execute and verify
     with pytest.raises(AwsApiMcpError) as exc_info:
-        await call_aws.fn('aws invalid-service invalid-operation', DummyCtx())
+        await call_aws.fn(['aws invalid-service invalid-operation'], DummyCtx())
 
     assert 'Invalid command syntax' in str(exc_info.value)
     mock_translate_cli_to_ir.assert_called_once_with('aws invalid-service invalid-operation')
@@ -407,7 +408,7 @@ async def test_call_aws_validation_error_generic_exception(mock_translate_cli_to
 
     # Execute and verify
     with pytest.raises(AwsApiMcpError) as exc_info:
-        await call_aws.fn('aws s3api list-buckets', DummyCtx())
+        await call_aws.fn(['aws s3api list-buckets'], DummyCtx())
 
     assert 'Generic validation error' in str(exc_info.value)
 
@@ -596,7 +597,7 @@ async def test_call_aws_validation_failures(mock_translate_cli_to_ir, mock_valid
 
     # Execute and verify
     with pytest.raises(CommandValidationError) as exc_info:
-        await call_aws.fn('aws s3api list-buckets', DummyCtx())
+        await call_aws.fn(['aws s3api list-buckets'], DummyCtx())
 
     assert 'Invalid parameter value' in str(exc_info.value)
     mock_translate_cli_to_ir.assert_called_once_with('aws s3api list-buckets')
@@ -627,7 +628,7 @@ async def test_call_aws_failed_constraints(mock_translate_cli_to_ir, mock_valida
 
     # Execute and verify
     with pytest.raises(CommandValidationError) as exc_info:
-        await call_aws.fn('aws s3api list-buckets', DummyCtx())
+        await call_aws.fn(['aws s3api list-buckets'], DummyCtx())
 
     assert 'Resource limit exceeded' in str(exc_info.value)
     mock_translate_cli_to_ir.assert_called_once_with('aws s3api list-buckets')
@@ -658,7 +659,7 @@ async def test_call_aws_both_validation_failures_and_constraints(
 
     # Execute and verify
     with pytest.raises(CommandValidationError) as exc_info:
-        await call_aws.fn('aws s3api list-buckets', DummyCtx())
+        await call_aws.fn(['aws s3api list-buckets'], DummyCtx())
 
     error_msg = str(exc_info.value)
     assert 'Invalid parameter value' in error_msg
@@ -732,7 +733,7 @@ async def test_call_aws_awscli_customization_error(
     )
 
     with pytest.raises(AwsApiMcpError) as exc_info:
-        await call_aws.fn('aws configure list', DummyCtx())
+        await call_aws.fn(['aws configure list'], DummyCtx())
 
     assert 'Configuration file not found' in str(exc_info.value)
     mock_translate_cli_to_ir.assert_called_once_with('aws configure list')
@@ -985,3 +986,58 @@ async def test_call_aws_delegates_to_helper(mock_call_aws_helper):
         cli_command='aws s3api list-buckets', ctx=ctx, max_results=None, credentials=None
     )
     assert result == mock_response
+
+@patch('awslabs.aws_api_mcp_server.server.DEFAULT_REGION', 'us-east-1')
+@patch('awslabs.aws_api_mcp_server.server.interpret_command')
+@patch('awslabs.aws_api_mcp_server.server.validate')
+@patch('awslabs.aws_api_mcp_server.server.translate_cli_to_ir')
+@patch('awslabs.aws_api_mcp_server.core.aws.service.is_operation_read_only')
+async def test_call_aws_runs_multiple_commands(
+    mock_is_operation_read_only,
+    mock_translate_cli_to_ir,
+    mock_validate,
+    mock_interpret,
+):
+    """Test call_aws returns success for a valid read-only command."""
+    # Create a proper ProgramInterpretationResponse mock
+    mock_response = InterpretationResponse(error=None, json='{"Buckets": []}', status_code=200)
+
+    mock_result = ProgramInterpretationResponse(
+        response=mock_response,
+        metadata=None,
+        validation_failures=None,
+        missing_context_failures=None,
+        failed_constraints=None,
+    )
+    mock_interpret.return_value = mock_result
+    mock_is_operation_read_only.return_value = True
+
+    # Mock IR with command metadata
+    mock_ir = MagicMock()
+    mock_ir.command_metadata = MagicMock()
+    mock_ir.command_metadata.service_sdk_name = 's3api'
+    mock_ir.command_metadata.operation_sdk_name = 'list-buckets'
+    mock_ir.command = MagicMock()
+    mock_ir.command.is_awscli_customization = False  # Ensure interpret_command is called
+    mock_translate_cli_to_ir.return_value = mock_ir
+
+    mock_response = MagicMock()
+    mock_response.validation_failed = False
+    mock_validate.return_value = mock_response
+
+    # Execute
+    result = await call_aws.fn(['aws s3api list-buckets', 'aws ec2 describe-instances'], DummyCtx())
+
+    # Verify - the result should be the ProgramInterpretationResponse object
+    assert result.responses[0].cli_command == 'aws s3api list-buckets'
+    assert result.responses[0].response == mock_result
+
+    assert result.responses[1].cli_command == 'aws ec2 describe-instances'
+    assert result.responses[1].response == mock_result
+
+    mock_interpret.asswer_has_calls(
+        [
+            call(cli_command='aws s3api list-buckets', max_results=None, credentials=None, default_region_override=None),
+            call(cli_command='aws ec2 describe-instances', max_results=None, credentials=None, default_region_override=None),
+        ],
+    )

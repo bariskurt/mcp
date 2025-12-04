@@ -16,6 +16,7 @@ import os
 import sys
 from .core.agent_scripts.manager import AGENT_SCRIPTS_MANAGER
 from .core.aws.driver import translate_cli_to_ir
+from .core.aws.error_handler import with_api_schema
 from .core.aws.service import (
     check_security_policy,
     execute_awscli_customization,
@@ -295,15 +296,15 @@ async def call_aws_helper(
 
         if not ir.command or ir_validation.validation_failed:
             error_message = (
-                f'Error while validating the command: {ir_validation.model_dump_json()}'
+                f'Error while validating the command 1: {ir_validation.model_dump_json()}'
             )
             await ctx.error(error_message)
-            raise CommandValidationError(error_message)
+            raise CommandValidationError(with_api_schema(cli_command, error_message))
     except AwsApiMcpError as e:
         await ctx.error(e.as_failure().reason)
         raise
     except Exception as e:
-        error_message = f'Error while validating the command: {str(e)}'
+        error_message = f'Error while validating the command 2: {str(e)}'
         await ctx.error(error_message)
         raise AwsApiMcpError(error_message)
 

@@ -296,7 +296,7 @@ async def call_aws_helper(
 
         if not ir.command or ir_validation.validation_failed:
             error_message = (
-                f'Error while validating the command 1: {ir_validation.model_dump_json()}'
+                f'Error while validating the command: {ir_validation.model_dump_json()}'
             )
             await ctx.error(error_message)
             raise CommandValidationError(with_api_schema(cli_command, error_message))
@@ -304,9 +304,9 @@ async def call_aws_helper(
         await ctx.error(e.as_failure().reason)
         raise
     except Exception as e:
-        error_message = f'Error while validating the command 2: {str(e)}'
+        error_message = f'Error while validating the command: {str(e)}'
         await ctx.error(error_message)
-        raise AwsApiMcpError(error_message)
+        raise AwsApiMcpError(with_api_schema(cli_command, error_message))
 
     logger.info(
         'Attempting to execute AWS CLI command: aws {} {} *parameters redacted*',

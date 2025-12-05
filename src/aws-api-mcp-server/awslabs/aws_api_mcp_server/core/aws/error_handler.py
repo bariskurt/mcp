@@ -68,6 +68,8 @@ def get_api_schema(service_name: str, operation_name: str):
     elif isinstance(command, ServiceCommand):
         print("Service")
         command_table = command._get_command_table()
+    else:
+        logger.info(f"Unknown command type: {type(command)}")
     operation = command_table[operation_name]
 
     return _generate_operation_document(operation)

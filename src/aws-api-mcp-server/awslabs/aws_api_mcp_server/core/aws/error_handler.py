@@ -7,7 +7,6 @@ from awscli.customizations.commands import BasicCommand
 from typing import Any
 from awscli.bcdoc.restdoc import ReSTDocument
 from .services import get_awscli_driver
-from ..common.config import ENABLE_VALIDATION_HELP
 
 IGNORED_ARGUMENTS = frozenset({'cli-input-json', 'generate-cli-skeleton'})
 
@@ -76,9 +75,6 @@ def get_api_schema(service_name: str, operation_name: str):
 
 
 def with_api_schema(cli_command: str, error_message: str) -> str:
-    
-    if not ENABLE_VALIDATION_HELP:
-        return error_message
 
     parts = cli_command.split(' ')
     if parts[0] != 'aws':

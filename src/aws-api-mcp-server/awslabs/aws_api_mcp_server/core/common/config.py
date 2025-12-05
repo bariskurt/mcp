@@ -150,4 +150,3 @@ FILE_ACCESS_MODE = get_file_access_mode()
 ENDPOINT_SUGGEST_AWS_COMMANDS = os.getenv(
     'ENDPOINT_SUGGEST_AWS_COMMANDS', 'https://api-mcp.global.api.aws/suggest-aws-commands'
 )
-ENABLE_VALIDATION_HELP = get_env_bool('AWS_API_MCP_ENABLE_VALIDATION_HELP', False)

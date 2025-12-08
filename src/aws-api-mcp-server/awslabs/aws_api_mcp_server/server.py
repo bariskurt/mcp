@@ -20,6 +20,7 @@ from .core.aws.error_handler import with_api_schema
 from .core.aws.service import (
     check_security_policy,
     execute_awscli_customization,
+    get_help_document,
     interpret_command,
     request_consent,
     validate,
@@ -335,6 +336,9 @@ async def call_aws_helper(
                 raise AwsApiMcpError(error_message)
             elif REQUIRE_MUTATION_CONSENT:
                 await request_consent(cli_command, ctx)
+
+        if ir.command and ir.command.is_help_operation:
+            return await get_help_document(cli_command, ctx)
 
         if ir.command and ir.command.is_awscli_customization:
             return execute_awscli_customization(

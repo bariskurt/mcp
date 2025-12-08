@@ -10,6 +10,8 @@ from .services import get_awscli_driver
 
 IGNORED_ARGUMENTS = frozenset({'cli-input-json', 'generate-cli-skeleton'})
 
+ENABLE_VALIDATION_ERROR_HELPER = False
+
 
 driver = get_awscli_driver()
 
@@ -75,6 +77,10 @@ def get_api_schema(service_name: str, operation_name: str):
 
 
 def with_api_schema(cli_command: str, error_message: str) -> str:
+
+    if not ENABLE_VALIDATION_ERROR_HELPER:
+        logger.info(f"Validation error helper is disabled.")
+        return error_message
 
     parts = cli_command.split(' ')
     if parts[0] != 'aws':

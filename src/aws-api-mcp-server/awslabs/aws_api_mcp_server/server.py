@@ -256,27 +256,41 @@ async def call_aws(
 
     # Allowing cli_commands to be a single string
     if isinstance(input, str):
+        return await safe_call_aws_helper(input, ctx, max_results)
+    
+    if isinstance(input, list):
+        return CallAWSBatchResponse(
+            responses=[
+                CallAWSResponse(
+                    cli_command=cli_command, 
+                    response=await safe_call_aws_helper(cli_command, ctx, max_results),
+                ) for cli_command in input
+            ]
+        )
+    
+    raise AwsApiMcpError("Tool input error. call_aws command accepts a string for a single command and list for multiple commands.")
+
+
+async def safe_call_aws_helper(
+    cli_command: Annotated[
+        str, Field(description='The complete AWS CLI command to execute. MUST start with "aws"')
+    ],
+    ctx: Context,
+    max_results: Annotated[
+        int | None,
+        Field(description='Optional limit for number of results (useful for pagination)'),
+    ] = None,
+) -> ProgramInterpretationResponse | AwsCliAliasResponse:
+    try:
         return await call_aws_helper(
-            cli_command=input,
+            cli_command=cli_command,
             ctx=ctx,
             max_results=max_results,
             credentials=None,
         )
-    elif isinstance(input, list):
-        responses = [
-            CallAWSResponse(
-                cli_command=cli_command, 
-                response=await call_aws_helper(
-                    cli_command=cli_command,
-                    ctx=ctx,
-                    max_results=max_results,
-                    credentials=None,
-                )
-            ) for cli_command in input
-        ]        
-        return CallAWSBatchResponse(responses=responses)
+    except AwsApiMcpError as e:
+        return AwsCliAliasResponse(error = str(e))
     
-    raise AwsApiMcpError("Tool input error. call_aws command accepts a string for a single command and list for multiple commands.")
 
 async def call_aws_helper(
     cli_command: Annotated[

@@ -30,6 +30,7 @@ from .core.common.config import (
     ENABLE_AGENT_SCRIPTS,
     ENDPOINT_SUGGEST_AWS_COMMANDS,
     FASTMCP_LOG_LEVEL,
+    FILE_ACCESS_MODE,
     HOST,
     PORT,
     READ_ONLY_KEY,
@@ -38,6 +39,7 @@ from .core.common.config import (
     STATELESS_HTTP,
     TRANSPORT,
     WORKING_DIRECTORY,
+    FileAccessMode,
 )
 from .core.common.errors import AwsApiMcpError, CommandValidationError
 from .core.common.helpers import get_requests_session, validate_aws_region
@@ -71,6 +73,12 @@ server = FastMCP(
     middleware=[HTTPHeaderValidationMiddleware()] if TRANSPORT == 'streamable-http' else [],
 )
 READ_OPERATIONS_INDEX: Optional[ReadOnlyOperations] = None
+
+_FILE_ACCESS_MSGS = {
+    FileAccessMode.UNRESTRICTED: 'File access is unrestricted so commands can reference files anywhere.',
+    FileAccessMode.NO_ACCESS: 'File access is disabled and commands with any local file reference will be rejected.',
+    FileAccessMode.WORKDIR: 'Commands can only reference files within the current working directory; otherwise, they will be rejected.',
+}
 
 
 @server.tool(
@@ -186,6 +194,7 @@ class CallAWSBatchResponse(BaseModel):
     - All commands are validated before execution to prevent errors
     - Supports pagination control via max_results parameter
     - The current working directory is {WORKING_DIRECTORY}
+    - {_FILE_ACCESS_MSGS[FILE_ACCESS_MODE]}
     - File paths should always have forward slash (/) as a separator regardless of the system. Example: 'c:/folder/file.txt'
 
     Single Command Mode:
@@ -225,7 +234,6 @@ class CallAWSBatchResponse(BaseModel):
     - DO NOT use shell redirection operators (>, >>, <)
     - DO NOT use command substitution ($())
     - DO NOT use shell variables or environment variables
-    - DO NOT use relative paths for reading or writing files, use absolute paths instead
 
     Common pitfalls to avoid:
     1. Missing required parameters - always include all required parameters

@@ -196,6 +196,7 @@ class CallAWSBatchResponse(BaseModel):
     - The current working directory is {WORKING_DIRECTORY}
     - {_FILE_ACCESS_MSGS[FILE_ACCESS_MODE]}
     - File paths should always have forward slash (/) as a separator regardless of the system. Example: 'c:/folder/file.txt'
+    - `-` can be used instead of a file path to return data in the response for commands that require an output file argument (e.g., 'aws s3api get-object', 'aws lambda invoke')
 
     Single Command Mode:
     - You can run a single AWS CLI command usign this tool.

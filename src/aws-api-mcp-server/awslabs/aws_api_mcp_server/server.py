@@ -14,9 +14,11 @@
 
 import os
 import sys
+import json
 from .core.agent_scripts.manager import AGENT_SCRIPTS_MANAGER
 from .core.aws.driver import translate_cli_to_ir
 from .core.aws.error_handler import with_api_schema
+from .core.aws.regions import get_active_regions
 from .core.aws.service import (
     check_security_policy,
     execute_awscli_customization,
@@ -179,9 +181,70 @@ class CallAWSResponse(BaseModel):
     cli_command: str
     response: ProgramInterpretationResponse | AwsCliAliasResponse
 
+    def is_successful(self):        
+        # Case 1: AwsCliAliasResponse
+        if isinstance(self.response, AwsCliAliasResponse):
+            return self.response.error is not None
+            
+        # Case 2: ProgramInterpretationResponse
+        if isinstance(self.response, ProgramInterpretationResponse):
+            return 200 <= self.response.response.status_code < 300
+        
+        # Case3: We have garbage response for some reason
+        return False
 
+    def is_empty(self):
+        # If there's an error, it's definitely not empty
+        if not self.is_successful():
+            return False
+
+        # No ides how to detect emptiness on alias        
+        if isinstance(self.response, AwsCliAliasResponse):
+            return False
+        
+        # Empty if no JSON content
+        json_content = self.response.response.as_json
+        if not json_content:
+            return True
+        
+        try: 
+            return self._is_content_empty(json.loads(json_content))
+        except Exception as e:
+            return False
+    
+    def _is_content_empty(self, content: any):
+
+        # None or empty basic types
+        if content is None or content == "" or content == [] or content == {}:
+            return True
+
+        # List → check if all elements are empty
+        if isinstance(content, list):
+            return all(self._is_content_empty(v) for v in content)
+
+        # Dict → check if all values are empty
+        if isinstance(content, dict):
+            return all(self._is_content_empty(v) for k, v in content.items() if k != "ResponseMetadata")
+
+        # Anything else (number, bool, real string) → non-empty
+        return False
+    
+       
 class CallAWSBatchResponse(BaseModel):
     responses: list[CallAWSResponse]
+    
+    def __iadd__(self, other):
+        if isinstance(other, CallAWSBatchResponse):
+            self.responses.extend(other.responses)
+        elif isinstance(other, CallAWSResponse):
+            self.responses.append(other)
+        return self
+    
+    def __len__(self):
+        return len(self.responses)
+    
+    def __getitem__(self, index):
+        return self.responses[index]
 
 
 @server.tool(
@@ -197,6 +260,8 @@ class CallAWSBatchResponse(BaseModel):
     - {_FILE_ACCESS_MSGS[FILE_ACCESS_MODE]}
     - File paths should always have forward slash (/) as a separator regardless of the system. Example: 'c:/folder/file.txt'
     - `-` can be used instead of a file path to return data in the response for commands that require an output file argument (e.g., 'aws s3api get-object', 'aws lambda invoke')
+    - You can use `--region *` to run a command on all regions enabled in the account.
+    - Do not generate explicit batch calls for iterating over all regions.
 
     Single Command Mode:
     - You can run a single AWS CLI command usign this tool.
@@ -207,14 +272,7 @@ class CallAWSBatchResponse(BaseModel):
     - The tool can also run multiple independent commands at the same time.
     - Call this tool with multiple CLI commands whenever possible.
     - Batch calling is especially useful where you need to run a command multiple times with different parameter values
-    - Example 1:
-        call_aws(
-            input=[
-                "aws s3api list-buckets --region us-east-1",
-                "aws s3api list-buckets --region us-west-2"
-            ]
-        )
-    - Example 2:
+    - Example:
         call_aws(
             input=[
                 "aws s3api get-bucket-website --bucket bucket1",
@@ -263,21 +321,76 @@ async def call_aws(
 ) -> ProgramInterpretationResponse | AwsCliAliasResponse | CallAWSBatchResponse:
     """Call AWS with the given CLI command and return the result as a dictionary."""
 
+    batch_response = CallAWSBatchResponse(responses=[])
+
     # Allowing cli_commands to be a single string
     if isinstance(input, str):
-        return await safe_call_aws_helper(input, ctx, max_results)
+        batch_response += await safe_process_command(input, ctx, max_results)
+    elif isinstance(input, list):
+        for cli_command in input:
+            batch_response += await safe_process_command(cli_command, ctx, max_results)        
+    else:
+        raise AwsApiMcpError("Tool input error. call_aws command accepts a string for a single command and list for multiple commands.")
+
+    # Return ProgramInterpretationResponse | AwsCliAliasResponse for single runs
+    if len(batch_response) == 1:
+        return batch_response[0].response
     
-    if isinstance(input, list):
-        return CallAWSBatchResponse(
-            responses=[
-                CallAWSResponse(
-                    cli_command=cli_command, 
-                    response=await safe_call_aws_helper(cli_command, ctx, max_results),
-                ) for cli_command in input
-            ]
+    # return CallAWSBatchResponse for batch calls
+    return batch_response
+
+
+def _maybe_expand_region(cli_command: str) -> str | list[str]:
+    if "--region" in cli_command:
+        parts = cli_command.split()
+        try:
+            region_idx = parts.index("--region")
+            if region_idx + 1 < len(parts) and parts[region_idx + 1] == "*":
+                base_command = " ".join(parts[:region_idx] + parts[region_idx + 2:])
+                return [base_command + f' --region {region}' for region in get_active_regions()]
+        except (ValueError, IndexError):
+            raise AwsApiMcpError(f"Cannot parse --region parameter: {cli_command}")
+    return cli_command
+
+
+async def safe_process_command(
+    cli_command: Annotated[
+        str, Field(description='The complete AWS CLI command to execute. MUST start with "aws"')
+    ],
+    ctx: Context,
+    max_results: Annotated[
+        int | None,
+        Field(description='Optional limit for number of results (useful for pagination)'),
+    ] = None,
+) -> CallAWSResponse | CallAWSBatchResponse:
+    
+    # Try to expand --region or return parse error
+    try:
+        cli_command_or_list = _maybe_expand_region(cli_command)        
+    except AwsApiMcpError as e:
+        return CallAWSResponse(
+            cli_command=cli_command, 
+            response=AwsCliAliasResponse(error = str(e))
         )
     
-    raise AwsApiMcpError("Tool input error. call_aws command accepts a string for a single command and list for multiple commands.")
+    # No --region found in command. Run the command and return a CallAWSResponse
+    if isinstance(cli_command_or_list, str):
+        return await safe_call_aws_helper(cli_command, ctx, max_results)
+    
+    # Run commands expanded for available regions
+    batch_response = CallAWSBatchResponse(
+        responses = [
+            await safe_call_aws_helper(cli_command, ctx, max_results)
+            for cli_command in cli_command_or_list
+        ]
+    )
+
+    # Filter empty responses
+    for response in batch_response.responses:
+        if response.is_empty():
+            response.response = AwsCliAliasResponse(response="No resource found in this region.")
+
+    return batch_response
 
 
 async def safe_call_aws_helper(
@@ -289,16 +402,17 @@ async def safe_call_aws_helper(
         int | None,
         Field(description='Optional limit for number of results (useful for pagination)'),
     ] = None,
-) -> ProgramInterpretationResponse | AwsCliAliasResponse:
+) -> CallAWSResponse:
     try:
-        return await call_aws_helper(
+        response = await call_aws_helper(
             cli_command=cli_command,
             ctx=ctx,
             max_results=max_results,
             credentials=None,
         )
     except AwsApiMcpError as e:
-        return AwsCliAliasResponse(error = str(e))
+        response = AwsCliAliasResponse(error = str(e))
+    return CallAWSResponse(cli_command=cli_command, response=response)
     
 
 async def call_aws_helper(

@@ -1,7 +1,7 @@
 import re
 import json
 from loguru import logger
-
+from pathlib import Path
 from awscli.clidriver import ServiceCommand
 from awscli.customizations.commands import BasicCommand
 from typing import Any
@@ -10,7 +10,9 @@ from .services import get_awscli_driver
 
 IGNORED_ARGUMENTS = frozenset({'cli-input-json', 'generate-cli-skeleton'})
 
-ENABLE_VALIDATION_ERROR_HELPER = False
+EXAMPLES_FILE = Path.home().resolve() / ".config" / "aws-api-mcp-server" / "api_examples.jsonl"
+ADD_DOCUMENTATION = False
+ADD_EXAMPLES = True
 
 
 driver = get_awscli_driver()
@@ -76,9 +78,63 @@ def get_api_schema(service_name: str, operation_name: str):
     return _generate_operation_document(operation)
 
 
+def build_examplelookup():    
+    examples_lookup = {}
+    with open(EXAMPLES_FILE, 'r') as f:
+        for line in f:
+            try:
+                api_example = json.loads(line)
+                examples_lookup[api_example["command"]] = api_example["examples"]
+            except json.JSONDecodeError:
+                logger.info(f"Skipping invalid JSON line: {line}")
+    return examples_lookup
+
+
+def get_examples(service_name: str, operation_name: str) -> dict[str, Any]:
+    try:
+        examples_lookup = build_examplelookup()        
+    except Exception as e:
+        raise Exception(f"Cannot load API examples file: {str(e)}")
+    
+    examples = examples_lookup.get(f"aws {service_name} {operation_name}")
+    if not examples:
+        raise Exception(f"No examples found for {service_name}.{operation_name}")
+    
+    return examples
+
+
+def add_documentation(service_name: str, operation_name: str, error_message: str) -> str:
+    try:
+        description, params = get_api_schema(service_name, operation_name)
+        helper_documentation = {
+            "documentation": {
+                "service": service_name,
+                "operation": operation_name,
+                "description": description,
+                "parameters": params
+            }
+        }
+        return error_message + "\n" + json.dumps(helper_documentation, indent=4)
+        
+    except Exception as e:        
+        logger.info(f"API schema extraction error: {e}")
+    
+    return error_message
+
+
+def add_examples(service_name: str, operation_name: str, error_message: str) -> str:
+    try:
+        examples = get_examples(service_name, operation_name)        
+        return error_message + " Here are examples for the correct usage of this command: " + json.dumps(examples)
+    except Exception as e:        
+        logger.info(f"API example extraction error: {e}")
+    
+    return error_message
+
+
 def with_api_schema(cli_command: str, error_message: str) -> str:
 
-    if not ENABLE_VALIDATION_ERROR_HELPER:
+    if not (ADD_DOCUMENTATION or ADD_EXAMPLES):
         logger.info(f"Validation error helper is disabled.")
         return error_message
 
@@ -90,19 +146,10 @@ def with_api_schema(cli_command: str, error_message: str) -> str:
     service_name, operation_name = parts[1], parts[2]
     logger.info(f"Extracing API schema for service: {service_name}, operation: {operation_name}")
 
-    try:
-        description, params = get_api_schema(service_name, operation_name)
-    except Exception as e:        
-        logger.info(f"API schema extraction error: {e}")
-        return error_message
+    if ADD_DOCUMENTATION:
+        error_message = add_documentation(service_name, operation_name, error_message)
     
-    helper_documentation = {
-        "documentation": {
-            "service": service_name,
-            "operation": operation_name,
-            "description": description,
-            "parameters": params
-        }
-    }
+    if ADD_EXAMPLES:
+        error_message = add_examples(service_name, operation_name, error_message)
 
-    return error_message + "\n" + json.dumps(helper_documentation, indent=4)
+    return error_message

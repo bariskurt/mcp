@@ -77,9 +77,9 @@ server = FastMCP(
 READ_OPERATIONS_INDEX: Optional[ReadOnlyOperations] = None
 
 _FILE_ACCESS_MSGS = {
-    FileAccessMode.UNRESTRICTED: 'File access is unrestricted so commands can reference files anywhere.',
-    FileAccessMode.NO_ACCESS: 'File access is disabled and commands with any local file reference will be rejected.',
-    FileAccessMode.WORKDIR: 'Commands can only reference files within the current working directory; otherwise, they will be rejected.',
+    FileAccessMode.UNRESTRICTED: f"File access is unrestricted so commands can reference files anywhere; use forward slashes (/) regardless of the system (e.g. '/home/user/file.txt' or 'subdir/file.txt'); relative paths resolve from the working directory ({WORKING_DIRECTORY}).",
+    FileAccessMode.NO_ACCESS: 'File access is disabled and commands with any local file reference will be rejected. S3 URIs (s3://...) and stdout redirect (-) remain allowed.',
+    FileAccessMode.WORKDIR: f"Commands can only reference files within the working directory ({WORKING_DIRECTORY}); use forward slashes (/) regardless of the system (e.g. if working directory is '/tmp/workdir', use '/tmp/workdir/subdir/file.txt' or 'subdir/file.txt'); relative paths resolve from the working directory.",
 }
 
 
@@ -256,12 +256,9 @@ class CallAWSBatchResponse(BaseModel):
     - For cross-region or account-wide operations, explicitly include --region parameter
     - All commands are validated before execution to prevent errors
     - Supports pagination control via max_results parameter
-    - The current working directory is {WORKING_DIRECTORY}
     - {_FILE_ACCESS_MSGS[FILE_ACCESS_MODE]}
-    - File paths should always have forward slash (/) as a separator regardless of the system. Example: 'c:/folder/file.txt'
-    - `-` can be used instead of a file path to return data in the response for commands that require an output file argument (e.g., 'aws s3api get-object', 'aws lambda invoke')
     - You can use `--region *` to run a command on all regions enabled in the account.
-    - Do not generate explicit batch calls for iterating over all regions.
+    - Do not generate explicit batch calls for iterating over all regions, use `--region *` instead.
 
     Single Command Mode:
     - You can run a single AWS CLI command usign this tool.

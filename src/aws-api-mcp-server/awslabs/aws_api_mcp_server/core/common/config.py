@@ -198,3 +198,10 @@ READ_TIMEOUT_SECONDS = 60
 AUTH_TYPE = os.getenv('AUTH_TYPE')
 AUTH_ISSUER = os.getenv('AUTH_ISSUER')
 AUTH_JWKS_URI = os.getenv('AUTH_JWKS_URI')
+
+# Adds CLI documentation upon validation errors.
+USE_CLI_DOCUMENTATION = get_env_bool('AWS_API_MCP_USE_CLI_DOCUMENTATION', False)
+
+# Adds CLI examples upon validation errors.
+USE_CLI_EXAMPLES = get_env_bool('AWS_API_MCP_USE_CLI_EXAMPLES', False)
+CLI_EXAMPLES_PATH = Path.home().resolve() / ".config/aws-api-mcp-server/api_examples.jsonl"

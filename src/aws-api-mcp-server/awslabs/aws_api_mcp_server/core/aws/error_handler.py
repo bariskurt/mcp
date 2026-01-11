@@ -1,21 +1,25 @@
 import re
 import json
 from loguru import logger
-from pathlib import Path
 from awscli.clidriver import ServiceCommand
 from awscli.customizations.commands import BasicCommand
 from typing import Any
 from awscli.bcdoc.restdoc import ReSTDocument
 from .services import get_awscli_driver
+from ..common.config import USE_CLI_DOCUMENTATION, USE_CLI_EXAMPLES, CLI_EXAMPLES_PATH
 
 IGNORED_ARGUMENTS = frozenset({'cli-input-json', 'generate-cli-skeleton'})
 
-EXAMPLES_FILE = Path.home().resolve() / ".config" / "aws-api-mcp-server" / "api_examples.jsonl"
-ADD_DOCUMENTATION = False
-ADD_EXAMPLES = True
-
 
 driver = get_awscli_driver()
+
+class CliExampleFileNotLoadedError(Exception):
+    pass
+
+
+class CliExampleNotFoundError(Exception):
+    pass
+
 
 def _clean_text(text: str) -> str:
     text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
@@ -80,7 +84,7 @@ def get_api_schema(service_name: str, operation_name: str):
 
 def build_examplelookup():    
     examples_lookup = {}
-    with open(EXAMPLES_FILE, 'r') as f:
+    with open(CLI_EXAMPLES_PATH, 'r') as f:
         for line in f:
             try:
                 api_example = json.loads(line)
@@ -94,11 +98,11 @@ def get_examples(service_name: str, operation_name: str) -> dict[str, Any]:
     try:
         examples_lookup = build_examplelookup()        
     except Exception as e:
-        raise Exception(f"Cannot load API examples file: {str(e)}")
+        raise CliExampleFileNotLoadedError(f"Cannot load API examples file: {str(e)}")
     
     examples = examples_lookup.get(f"aws {service_name} {operation_name}")
     if not examples:
-        raise Exception(f"No examples found for {service_name}.{operation_name}")
+        raise CliExampleNotFoundError(f"No examples found for {service_name}.{operation_name}")
     
     return examples
 
@@ -126,7 +130,7 @@ def add_examples(service_name: str, operation_name: str, error_message: str) -> 
     try:
         examples = get_examples(service_name, operation_name)        
         return error_message + " Here are examples for the correct usage of this command: " + json.dumps(examples)
-    except Exception as e:        
+    except (CliExampleFileNotLoadedError, CliExampleNotFoundError) as e:
         logger.info(f"API example extraction error: {e}")
     
     return error_message
@@ -134,22 +138,22 @@ def add_examples(service_name: str, operation_name: str, error_message: str) -> 
 
 def with_api_schema(cli_command: str, error_message: str) -> str:
 
-    if not (ADD_DOCUMENTATION or ADD_EXAMPLES):
-        logger.info(f"Validation error helper is disabled.")
+    if not (USE_CLI_DOCUMENTATION or USE_CLI_EXAMPLES):
+        logger.info("Validation error helper is disabled.")
         return error_message
 
     parts = cli_command.split(' ')
     if parts[0] != 'aws':
-        logger.info(f"Not a valid AWS CLI, skip API schema extraction.")
+        logger.info("Not a valid AWS CLI, skip API schema extraction.")
         return error_message
 
     service_name, operation_name = parts[1], parts[2]
     logger.info(f"Extracing API schema for service: {service_name}, operation: {operation_name}")
 
-    if ADD_DOCUMENTATION:
+    if USE_CLI_DOCUMENTATION:
         error_message = add_documentation(service_name, operation_name, error_message)
     
-    if ADD_EXAMPLES:
+    if USE_CLI_EXAMPLES:
         error_message = add_examples(service_name, operation_name, error_message)
 
     return error_message

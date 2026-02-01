@@ -364,6 +364,9 @@ if ENABLE_AGENT_SCRIPTS:
 
 
 def main():
+
+    logger.info("STARTING AWS API MCP BASELINE: MOS-V1-BASELINE ON 2026-02-02")
+
     """Main entry point for the AWS API MCP server."""
     global READ_OPERATIONS_INDEX
 
